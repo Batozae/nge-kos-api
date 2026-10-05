@@ -1,4 +1,8 @@
 require("dotenv").config();
+if (!process.env.JWT_SECRET) {
+  console.error("JWT_SECRET belum diisi di file .env. Server dihentikan.");
+  process.exit(1);
+}
 const express = require("express");
 const cors = require("cors");
 require("./db"); // menjalankan pembuatan tabel + seed
