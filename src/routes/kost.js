@@ -1,7 +1,12 @@
 const express = require("express");
 const db = require("../db");
 const { kirimError } = require("../utils/http");
-const { formatDaftarKost } = require("../utils/kost");
+const {
+  formatDaftarKost,
+  validasiKost,
+  ambilKostById,
+} = require("../utils/kost");
+const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -131,6 +136,119 @@ router.get("/:id", (req, res) => {
   }
 
   res.json({ data: formatDaftarKost([row])[0] });
+});
+
+// ---------- Endpoint khusus pemilik ----------
+
+// Dipakai PUT dan DELETE: kost harus ada dan milik pemilik yang sedang login.
+// Mengembalikan baris kost, atau null setelah mengirim error sendiri.
+function ambilKostMilik(req, res) {
+  const { id } = req.params;
+  const row = /^\d+$/.test(id)
+    ? db.prepare("SELECT * FROM kost WHERE id = ?").get(Number(id))
+    : undefined;
+
+  if (!row) {
+    kirimError(res, 404, "NOT_FOUND", "Kost tidak ditemukan");
+    return null;
+  }
+  if (row.owner_id !== req.user.id) {
+    kirimError(res, 403, "FORBIDDEN", "Kost ini bukan milik Anda");
+    return null;
+  }
+  return row;
+}
+
+function simpanFasilitas(kostId, daftar) {
+  const stmt = db.prepare(
+    "INSERT INTO kost_fasilitas (kost_id, nama) VALUES (?, ?)",
+  );
+  for (const nama of daftar) stmt.run(kostId, nama);
+}
+
+// POST /kost
+router.post("/", requireAuth, requireRole("pemilik"), (req, res) => {
+  const hasil = validasiKost(req.body);
+  if (hasil.error) return kirimError(res, 400, "VALIDATION_ERROR", hasil.error);
+  const k = hasil.nilai;
+
+  const buat = db.transaction(() => {
+    const kostId = db
+      .prepare(
+        `
+        INSERT INTO kost (
+          owner_id, nama, alamat, patokan, maps_url, kategori_penyewa, ukuran_kamar,
+          jumlah_kamar_total, jumlah_kamar_kosong, harga, image_url, whatsapp_number
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        req.user.id,
+        k.nama,
+        k.alamat,
+        k.patokan,
+        k.mapsUrl,
+        k.kategoriPenyewa,
+        k.ukuranKamar,
+        k.jumlahKamarTotal,
+        k.jumlahKamarKosong,
+        k.harga,
+        k.imageUrl,
+        k.whatsappNumber,
+      ).lastInsertRowid;
+    simpanFasilitas(kostId, k.fasilitas);
+    return Number(kostId);
+  });
+
+  res.status(201).json({ data: ambilKostById(buat()) });
+});
+
+// PUT /kost/:id  (mengganti seluruh data listing)
+router.put("/:id", requireAuth, requireRole("pemilik"), (req, res) => {
+  const row = ambilKostMilik(req, res);
+  if (!row) return;
+
+  const hasil = validasiKost(req.body);
+  if (hasil.error) return kirimError(res, 400, "VALIDATION_ERROR", hasil.error);
+  const k = hasil.nilai;
+
+  db.transaction(() => {
+    db.prepare(
+      `
+      UPDATE kost SET
+        nama = ?, alamat = ?, patokan = ?, maps_url = ?, kategori_penyewa = ?,
+        ukuran_kamar = ?, jumlah_kamar_total = ?, jumlah_kamar_kosong = ?,
+        harga = ?, image_url = ?, whatsapp_number = ?
+      WHERE id = ?
+    `,
+    ).run(
+      k.nama,
+      k.alamat,
+      k.patokan,
+      k.mapsUrl,
+      k.kategoriPenyewa,
+      k.ukuranKamar,
+      k.jumlahKamarTotal,
+      k.jumlahKamarKosong,
+      k.harga,
+      k.imageUrl,
+      k.whatsappNumber,
+      row.id,
+    );
+    db.prepare("DELETE FROM kost_fasilitas WHERE kost_id = ?").run(row.id);
+    simpanFasilitas(row.id, k.fasilitas);
+  })();
+
+  res.json({ data: ambilKostById(row.id) });
+});
+
+// DELETE /kost/:id
+router.delete("/:id", requireAuth, requireRole("pemilik"), (req, res) => {
+  const row = ambilKostMilik(req, res);
+  if (!row) return;
+
+  db.prepare("DELETE FROM kost WHERE id = ?").run(row.id); // fasilitas ikut terhapus (CASCADE)
+  res.status(204).send();
 });
 
 module.exports = router;
