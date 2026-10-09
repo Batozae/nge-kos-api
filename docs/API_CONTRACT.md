@@ -49,17 +49,20 @@ Kost:
 
 ## Endpoint
 
-| Method | Path           | Akses                   | Sukses             | Error                                         |
-| ------ | -------------- | ----------------------- | ------------------ | --------------------------------------------- |
-| POST   | /auth/register | publik                  | 201                | 400 VALIDATION_ERROR, 409 EMAIL_TAKEN         |
-| POST   | /auth/login    | publik                  | 200                | 400 VALIDATION_ERROR, 401 INVALID_CREDENTIALS |
-| GET    | /auth/me       | login                   | 200 `{data: User}` | 401 UNAUTHORIZED / INVALID_TOKEN              |
-| GET    | /kost          | publik                  | 200                | 400 VALIDATION_ERROR                          |
-| GET    | /kost/:id      | publik                  | 200                | 404 NOT_FOUND                                 |
-| GET    | /owner/kost    | pemilik                 | 200                | 401, 403 FORBIDDEN                            |
-| POST   | /kost          | pemilik                 | 201                | 400, 401, 403                                 |
-| PUT    | /kost/:id      | pemilik pemilik listing | 200                | 400, 401, 403, 404                            |
-| DELETE | /kost/:id      | pemilik pemilik listing | 204                | 401, 403, 404                                 |
+| Method | Path             | Akses                   | Sukses                                        | Error                                         |
+| ------ | ---------------- | ----------------------- | --------------------------------------------- | --------------------------------------------- |
+| POST   | /auth/register   | publik                  | 201                                           | 400 VALIDATION_ERROR, 409 EMAIL_TAKEN         |
+| POST   | /auth/login      | publik                  | 200                                           | 400 VALIDATION_ERROR, 401 INVALID_CREDENTIALS |
+| GET    | /auth/me         | login                   | 200 `{data: User}`                            | 401 UNAUTHORIZED / INVALID_TOKEN              |
+| GET    | /kost            | publik                  | 200                                           | 400 VALIDATION_ERROR                          |
+| GET    | /kost/:id        | publik                  | 200                                           | 404 NOT_FOUND                                 |
+| GET    | /owner/kost      | pemilik                 | 200                                           | 401, 403 FORBIDDEN                            |
+| POST   | /kost            | pemilik                 | 201                                           | 400, 401, 403                                 |
+| PUT    | /kost/:id        | pemilik pemilik listing | 200                                           | 400, 401, 403, 404                            |
+| DELETE | /kost/:id        | pemilik pemilik listing | 204                                           | 401, 403, 404                                 |
+| GET    | /favorit         | pencari                 | 200 `{data: [Kost], total}` (terbaru di atas) | 401, 403                                      |
+| PUT    | /favorit/:kostId | pencari                 | 204 (idempoten)                               | 401, 403, 404                                 |
+| DELETE | /favorit/:kostId | pencari                 | 204 (idempoten)                               | 401, 403, 404                                 |
 
 Urutan pemeriksaan PUT/DELETE: token (401) → peran (403) → kost ada (404) → milik sendiri (403) → isi body (400, hanya PUT).
 
@@ -110,4 +113,4 @@ PUT **mengganti seluruh data**: field opsional yang tidak dikirim menjadi kosong
 
 ## Di luar cakupan versi ini
 
-Upload foto, favorit di server (favorit tetap lokal di aplikasi), pagination, refresh token, pembatasan percobaan login.
+Upload foto, pagination, refresh token, pembatasan percobaan login.

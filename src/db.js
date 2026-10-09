@@ -37,6 +37,12 @@ db.exec(`
     nama TEXT NOT NULL,
     PRIMARY KEY (kost_id, nama)
   );
+
+    CREATE TABLE IF NOT EXISTS favorit (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kost_id INTEGER NOT NULL REFERENCES kost(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, kost_id)
+  );
 `);
 
 // ---------- Seed: hanya berjalan kalau tabel users masih kosong ----------

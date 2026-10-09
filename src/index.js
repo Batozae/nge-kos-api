@@ -19,6 +19,7 @@ app.get("/health", (req, res) => {
 app.use("/auth", require("./routes/auth"));
 app.use("/kost", require("./routes/kost"));
 app.use("/owner", require("./routes/owner"));
+app.use("/favorit", require("./routes/favorit"));
 
 // Endpoint yang tidak dikenal
 app.use((req, res) => {
