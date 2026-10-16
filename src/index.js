@@ -47,8 +47,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 // Server baru mulai menerima request setelah koneksi MySQL, skema, dan
-// seed selesai (await siap) -- mencegah request pertama gagal karena
-// tabel belum sempat dibuat (beda dari SQLite yang sinkron sebelumnya).
+// seed selesai (await siap).
 siap
   .then(() => {
     app.listen(PORT, () => {

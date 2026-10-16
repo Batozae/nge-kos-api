@@ -76,9 +76,7 @@ router.get("/", async (req, res, next) => {
 
     if (q) {
       // LIKE di MySQL/MariaDB bergantung collation tabel untuk peka/tidak
-      // peka huruf besar-kecil; collation bawaan (*_ci) sudah tidak peka,
-      // sama seperti perilaku lama di SQLite (yang hanya tidak peka untuk
-      // huruf ASCII, kebetulan cukup untuk kasus kita).
+      // peka huruf besar-kecil.
       where.push("(nama LIKE ? OR alamat LIKE ?)");
       params.push(`%${q}%`, `%${q}%`);
     }
@@ -157,7 +155,6 @@ router.get("/:id", async (req, res, next) => {
 // ---------- Endpoint khusus pemilik ----------
 
 // Dipakai PUT dan DELETE: kost harus ada dan milik pemilik yang sedang login.
-// Mengembalikan baris kost, atau null setelah mengirim error sendiri.
 async function ambilKostMilik(req, res) {
   const { id } = req.params;
   let row;
@@ -192,71 +189,27 @@ async function simpanFasilitas(koneksi, kostId, daftar) {
 }
 
 // POST /kost
-router.post("/", requireAuth, requireRole("pemilik"), async (req, res, next) => {
-  const hasil = validasiKost(req.body);
-  if (hasil.error) return kirimError(res, 400, "VALIDATION_ERROR", hasil.error);
-  const k = hasil.nilai;
-
-  const koneksi = await pool.getConnection();
-  try {
-    await koneksi.beginTransaction();
-
-    const [hasilInsert] = await koneksi.execute(
-      `INSERT INTO kost (
-        owner_id, nama, alamat, patokan, maps_url, kategori_penyewa, ukuran_kamar,
-        jumlah_kamar_total, jumlah_kamar_kosong, harga, image_url, whatsapp_number
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        req.user.id,
-        k.nama,
-        k.alamat,
-        k.patokan,
-        k.mapsUrl,
-        k.kategoriPenyewa,
-        k.ukuranKamar,
-        k.jumlahKamarTotal,
-        k.jumlahKamarKosong,
-        k.harga,
-        k.imageUrl,
-        k.whatsappNumber,
-      ],
-    );
-    const kostId = hasilInsert.insertId;
-    await simpanFasilitas(koneksi, kostId, k.fasilitas);
-
-    await koneksi.commit();
-    res.status(201).json({ data: await ambilKostById(kostId) });
-  } catch (err) {
-    await koneksi.rollback();
-    next(err);
-  } finally {
-    koneksi.release();
-  }
-});
-
-// PUT /kost/:id  (mengganti seluruh data listing)
-router.put("/:id", requireAuth, requireRole("pemilik"), async (req, res, next) => {
-  try {
-    const row = await ambilKostMilik(req, res);
-    if (!row) return;
-
+router.post(
+  "/",
+  requireAuth,
+  requireRole("pemilik"),
+  async (req, res, next) => {
     const hasil = validasiKost(req.body);
-    if (hasil.error) {
+    if (hasil.error)
       return kirimError(res, 400, "VALIDATION_ERROR", hasil.error);
-    }
     const k = hasil.nilai;
 
     const koneksi = await pool.getConnection();
     try {
       await koneksi.beginTransaction();
 
-      await koneksi.execute(
-        `UPDATE kost SET
-          nama = ?, alamat = ?, patokan = ?, maps_url = ?, kategori_penyewa = ?,
-          ukuran_kamar = ?, jumlah_kamar_total = ?, jumlah_kamar_kosong = ?,
-          harga = ?, image_url = ?, whatsapp_number = ?
-        WHERE id = ?`,
+      const [hasilInsert] = await koneksi.execute(
+        `INSERT INTO kost (
+        owner_id, nama, alamat, patokan, maps_url, kategori_penyewa, ukuran_kamar,
+        jumlah_kamar_total, jumlah_kamar_kosong, harga, image_url, whatsapp_number
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          req.user.id,
           k.nama,
           k.alamat,
           k.patokan,
@@ -268,27 +221,82 @@ router.put("/:id", requireAuth, requireRole("pemilik"), async (req, res, next) =
           k.harga,
           k.imageUrl,
           k.whatsappNumber,
-          row.id,
         ],
       );
-      await koneksi.execute("DELETE FROM kost_fasilitas WHERE kost_id = ?", [
-        row.id,
-      ]);
-      await simpanFasilitas(koneksi, row.id, k.fasilitas);
+      const kostId = hasilInsert.insertId;
+      await simpanFasilitas(koneksi, kostId, k.fasilitas);
 
       await koneksi.commit();
+      res.status(201).json({ data: await ambilKostById(kostId) });
     } catch (err) {
       await koneksi.rollback();
-      throw err;
+      next(err);
     } finally {
       koneksi.release();
     }
+  },
+);
 
-    res.json({ data: await ambilKostById(row.id) });
-  } catch (err) {
-    next(err);
-  }
-});
+// PUT /kost/:id  (mengganti seluruh data listing)
+router.put(
+  "/:id",
+  requireAuth,
+  requireRole("pemilik"),
+  async (req, res, next) => {
+    try {
+      const row = await ambilKostMilik(req, res);
+      if (!row) return;
+
+      const hasil = validasiKost(req.body);
+      if (hasil.error) {
+        return kirimError(res, 400, "VALIDATION_ERROR", hasil.error);
+      }
+      const k = hasil.nilai;
+
+      const koneksi = await pool.getConnection();
+      try {
+        await koneksi.beginTransaction();
+
+        await koneksi.execute(
+          `UPDATE kost SET
+          nama = ?, alamat = ?, patokan = ?, maps_url = ?, kategori_penyewa = ?,
+          ukuran_kamar = ?, jumlah_kamar_total = ?, jumlah_kamar_kosong = ?,
+          harga = ?, image_url = ?, whatsapp_number = ?
+        WHERE id = ?`,
+          [
+            k.nama,
+            k.alamat,
+            k.patokan,
+            k.mapsUrl,
+            k.kategoriPenyewa,
+            k.ukuranKamar,
+            k.jumlahKamarTotal,
+            k.jumlahKamarKosong,
+            k.harga,
+            k.imageUrl,
+            k.whatsappNumber,
+            row.id,
+          ],
+        );
+        await koneksi.execute("DELETE FROM kost_fasilitas WHERE kost_id = ?", [
+          row.id,
+        ]);
+        await simpanFasilitas(koneksi, row.id, k.fasilitas);
+
+        await koneksi.commit();
+      } catch (err) {
+        await koneksi.rollback();
+        throw err;
+      } finally {
+        koneksi.release();
+      }
+
+      res.json({ data: await ambilKostById(row.id) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // DELETE /kost/:id
 router.delete(

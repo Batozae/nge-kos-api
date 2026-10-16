@@ -13,17 +13,12 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   // Kolom DATETIME/TIMESTAMP dikembalikan sebagai string "YYYY-MM-DD HH:MM:SS"
-  // (bukan objek Date JS) -- berjaga-jaga andai suatu saat ada kolom tanggal
-  // yang perlu ditampilkan apa adanya di JSON.
   dateStrings: true,
 });
 
 // ---------- Skema ----------
 // ENGINE=InnoDB wajib ditulis eksplisit supaya ON DELETE CASCADE berfungsi
-// (MyISAM tidak mendukung foreign key). Kolom `id AUTO_INCREMENT` baru
-// ditambahkan di kost_fasilitas dan favorit sebagai pengganti `rowid`
-// bawaan SQLite (MySQL tidak punya rowid implisit) -- dipakai untuk
-// menjaga urutan (lihat utils/kost.js dan routes/favorit.js).
+// (MyISAM tidak mendukung foreign key).
 const SKEMA = [
   `CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,

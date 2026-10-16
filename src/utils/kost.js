@@ -28,8 +28,6 @@ function formatKost(row, fasilitas) {
 }
 
 // Mengambil fasilitas untuk banyak kost sekaligus (satu query, bukan satu per kost).
-// `ORDER BY id` (bukan `rowid`, yang tidak ada di MySQL) menjaga urutan
-// penyimpanan -- `id` di sini kolom AUTO_INCREMENT baru di kost_fasilitas.
 async function ambilFasilitas(ids) {
   const peta = new Map();
   if (ids.length === 0) return peta;

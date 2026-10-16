@@ -31,8 +31,6 @@ router.use(async (req, res, next) => {
 
 // GET /favorit: kost favorit milik pencari yang login, yang terbaru di atas.
 // `f.id DESC` menggantikan `f.rowid DESC` (tidak ada di MySQL) -- `id` di
-// sini kolom AUTO_INCREMENT baru di tabel favorit, naik seiring waktu
-// ditambahkan, jadi urutannya tetap "terbaru di atas" seperti sebelumnya.
 router.get("/", async (req, res, next) => {
   try {
     const [rows] = await pool.execute(
