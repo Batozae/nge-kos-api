@@ -1,78 +1,103 @@
-const Database = require("better-sqlite3");
-const path = require("path");
+const mysql = require("mysql2/promise");
 const bcrypt = require("bcryptjs");
 
-// File database disimpan di root proyek: nge-kos.db
-const db = new Database(path.join(__dirname, "..", "nge-kos.db"));
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+// ---------- Koneksi: connection pool, bukan satu koneksi tunggal ----------
+// Kredensial WAJIB dari .env (buat user khusus di phpMyAdmin, jangan root
+// tanpa sandi). Lihat .env.example untuk daftar variabel yang dibutuhkan.
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || "127.0.0.1",
+  port: Number(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  // Kolom DATETIME/TIMESTAMP dikembalikan sebagai string "YYYY-MM-DD HH:MM:SS"
+  // (bukan objek Date JS) -- berjaga-jaga andai suatu saat ada kolom tanggal
+  // yang perlu ditampilkan apa adanya di JSON.
+  dateStrings: true,
+});
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nama TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('pencari', 'pemilik'))
-  );
+// ---------- Skema ----------
+// ENGINE=InnoDB wajib ditulis eksplisit supaya ON DELETE CASCADE berfungsi
+// (MyISAM tidak mendukung foreign key). Kolom `id AUTO_INCREMENT` baru
+// ditambahkan di kost_fasilitas dan favorit sebagai pengganti `rowid`
+// bawaan SQLite (MySQL tidak punya rowid implisit) -- dipakai untuk
+// menjaga urutan (lihat utils/kost.js dan routes/favorit.js).
+const SKEMA = [
+  `CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nama VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    CHECK (role IN ('pencari', 'pemilik'))
+  ) ENGINE=InnoDB`,
 
-  CREATE TABLE IF NOT EXISTS kost (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER NOT NULL REFERENCES users(id),
-    nama TEXT NOT NULL,
-    alamat TEXT NOT NULL,
-    patokan TEXT,
-    maps_url TEXT NOT NULL,
-    kategori_penyewa TEXT NOT NULL CHECK (kategori_penyewa IN ('putra', 'putri', 'campur')),
-    ukuran_kamar TEXT NOT NULL,
-    jumlah_kamar_total INTEGER NOT NULL,
-    jumlah_kamar_kosong INTEGER NOT NULL,
-    harga INTEGER NOT NULL,
-    image_url TEXT,
-    whatsapp_number TEXT NOT NULL
-  );
+  `CREATE TABLE IF NOT EXISTS kost (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    owner_id INT NOT NULL,
+    nama VARCHAR(255) NOT NULL,
+    alamat VARCHAR(500) NOT NULL,
+    patokan VARCHAR(500),
+    maps_url VARCHAR(1000) NOT NULL,
+    kategori_penyewa VARCHAR(20) NOT NULL,
+    ukuran_kamar VARCHAR(100) NOT NULL,
+    jumlah_kamar_total INT NOT NULL,
+    jumlah_kamar_kosong INT NOT NULL,
+    harga INT NOT NULL,
+    image_url VARCHAR(1000),
+    whatsapp_number VARCHAR(20) NOT NULL,
+    CHECK (kategori_penyewa IN ('putra', 'putri', 'campur')),
+    CONSTRAINT fk_kost_owner FOREIGN KEY (owner_id) REFERENCES users(id)
+  ) ENGINE=InnoDB`,
 
-  CREATE TABLE IF NOT EXISTS kost_fasilitas (
-    kost_id INTEGER NOT NULL REFERENCES kost(id) ON DELETE CASCADE,
-    nama TEXT NOT NULL,
-    PRIMARY KEY (kost_id, nama)
-  );
+  `CREATE TABLE IF NOT EXISTS kost_fasilitas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    kost_id INT NOT NULL,
+    nama VARCHAR(100) NOT NULL,
+    UNIQUE KEY unik_kost_fasilitas (kost_id, nama),
+    CONSTRAINT fk_fasilitas_kost FOREIGN KEY (kost_id) REFERENCES kost(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB`,
 
-    CREATE TABLE IF NOT EXISTS favorit (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    kost_id INTEGER NOT NULL REFERENCES kost(id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, kost_id)
-  );
-`);
+  `CREATE TABLE IF NOT EXISTS favorit (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    kost_id INT NOT NULL,
+    UNIQUE KEY unik_favorit (user_id, kost_id),
+    CONSTRAINT fk_favorit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_favorit_kost FOREIGN KEY (kost_id) REFERENCES kost(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB`,
+];
+
+async function buatSkema() {
+  for (const sql of SKEMA) {
+    await pool.query(sql);
+  }
+}
 
 // ---------- Seed: hanya berjalan kalau tabel users masih kosong ----------
-function seed() {
-  const jumlahUser = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
-  if (jumlahUser > 0) return;
+async function seed() {
+  const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM users");
+  if (n > 0) return;
 
-  const insertUser = db.prepare(
-    "INSERT INTO users (nama, email, password_hash, role) VALUES (?, ?, ?, ?)",
-  );
-  const insertKost = db.prepare(`
-    INSERT INTO kost (
-      owner_id, nama, alamat, patokan, maps_url, kategori_penyewa, ukuran_kamar,
-      jumlah_kamar_total, jumlah_kamar_kosong, harga, image_url, whatsapp_number
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertFasilitas = db.prepare(
-    "INSERT INTO kost_fasilitas (kost_id, nama) VALUES (?, ?)",
-  );
+  const koneksi = await pool.getConnection();
+  try {
+    await koneksi.beginTransaction();
 
-  const jalankanSeed = db.transaction(() => {
     // Akun khusus pengembangan. Jangan dipakai di luar lokal.
-    const hash = bcrypt.hashSync("password123", 10);
-    const pemilikId = insertUser.run(
-      "Pemilik Contoh",
-      "pemilik@nge-kos.test",
-      hash,
-      "pemilik",
-    ).lastInsertRowid;
-    insertUser.run("Pencari Contoh", "pencari@nge-kos.test", hash, "pencari");
+    const hash = await bcrypt.hash("password123", 10);
+
+    const [hasilPemilik] = await koneksi.execute(
+      "INSERT INTO users (nama, email, password_hash, role) VALUES (?, ?, ?, ?)",
+      ["Pemilik Contoh", "pemilik@nge-kos.test", hash, "pemilik"],
+    );
+    const pemilikId = hasilPemilik.insertId;
+
+    await koneksi.execute(
+      "INSERT INTO users (nama, email, password_hash, role) VALUES (?, ?, ?, ?)",
+      ["Pencari Contoh", "pencari@nge-kos.test", hash, "pencari"],
+    );
 
     const dataKost = [
       {
@@ -117,28 +142,55 @@ function seed() {
     ];
 
     for (const k of dataKost) {
-      const kostId = insertKost.run(
-        pemilikId,
-        k.nama,
-        k.alamat,
-        null,
-        k.maps,
-        k.kategori,
-        k.ukuran,
-        k.total,
-        k.kosong,
-        k.harga,
-        k.image,
-        k.wa,
-      ).lastInsertRowid;
-      for (const f of k.fasilitas) insertFasilitas.run(kostId, f);
+      const [hasilKost] = await koneksi.execute(
+        `INSERT INTO kost (
+          owner_id, nama, alamat, patokan, maps_url, kategori_penyewa, ukuran_kamar,
+          jumlah_kamar_total, jumlah_kamar_kosong, harga, image_url, whatsapp_number
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          pemilikId,
+          k.nama,
+          k.alamat,
+          null,
+          k.maps,
+          k.kategori,
+          k.ukuran,
+          k.total,
+          k.kosong,
+          k.harga,
+          k.image,
+          k.wa,
+        ],
+      );
+      const kostId = hasilKost.insertId;
+      for (const f of k.fasilitas) {
+        await koneksi.execute(
+          "INSERT INTO kost_fasilitas (kost_id, nama) VALUES (?, ?)",
+          [kostId, f],
+        );
+      }
     }
-  });
 
-  jalankanSeed();
-  console.log("Seed selesai: 2 user dan 3 kost ditambahkan.");
+    await koneksi.commit();
+    console.log("Seed selesai: 2 user dan 3 kost ditambahkan.");
+  } catch (err) {
+    await koneksi.rollback();
+    throw err;
+  } finally {
+    koneksi.release();
+  }
 }
 
-seed();
+// index.js menunggu promise ini (await siap) sebelum app.listen, supaya
+// server tidak menerima request sebelum tabel & seed selesai dibuat.
+const siap = (async () => {
+  if (!process.env.DB_NAME || !process.env.DB_USER) {
+    throw new Error(
+      "DB_HOST/DB_USER/DB_PASSWORD/DB_NAME belum diisi di file .env. Lihat .env.example.",
+    );
+  }
+  await buatSkema();
+  await seed();
+})();
 
-module.exports = db;
+module.exports = { pool, siap };

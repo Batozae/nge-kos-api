@@ -1,4 +1,4 @@
-const db = require("../db");
+const { pool } = require("../db");
 
 // Satu-satunya tempat aturan status didefinisikan.
 // kosong = 0 -> penuh; kosong <= 25% dari total -> hampir_penuh; selain itu -> tersedia
@@ -27,18 +27,21 @@ function formatKost(row, fasilitas) {
   };
 }
 
-// Mengambil fasilitas untuk banyak kost sekaligus (satu query, bukan satu per kost)
-function ambilFasilitas(ids) {
+// Mengambil fasilitas untuk banyak kost sekaligus (satu query, bukan satu per kost).
+// `ORDER BY id` (bukan `rowid`, yang tidak ada di MySQL) menjaga urutan
+// penyimpanan -- `id` di sini kolom AUTO_INCREMENT baru di kost_fasilitas.
+async function ambilFasilitas(ids) {
   const peta = new Map();
   if (ids.length === 0) return peta;
 
-  const placeholders = ids.map(() => "?").join(",");
-  const baris = db
-    .prepare(
-      `SELECT kost_id, nama FROM kost_fasilitas
-       WHERE kost_id IN (${placeholders}) ORDER BY rowid`,
-    )
-    .all(...ids);
+  // pool.query (bukan pool.execute) dipakai di sini karena perlu ekspansi
+  // array `ids` menjadi daftar IN (?, ?, ...) -- mysql2 mendukung ini lewat
+  // query() dengan escaping sendiri, tidak lewat protokol prepared statement.
+  const [baris] = await pool.query(
+    `SELECT kost_id, nama FROM kost_fasilitas
+     WHERE kost_id IN (?) ORDER BY id`,
+    [ids],
+  );
 
   for (const b of baris) {
     if (!peta.has(b.kost_id)) peta.set(b.kost_id, []);
@@ -47,8 +50,8 @@ function ambilFasilitas(ids) {
   return peta;
 }
 
-function formatDaftarKost(rows) {
-  const peta = ambilFasilitas(rows.map((r) => r.id));
+async function formatDaftarKost(rows) {
+  const peta = await ambilFasilitas(rows.map((r) => r.id));
   return rows.map((r) => formatKost(r, peta.get(r.id) || []));
 }
 
@@ -153,9 +156,12 @@ function validasiKost(body) {
   };
 }
 
-function ambilKostById(id) {
-  const row = db.prepare("SELECT * FROM kost WHERE id = ?").get(id);
-  return row ? formatDaftarKost([row])[0] : null;
+async function ambilKostById(id) {
+  const [baris] = await pool.execute("SELECT * FROM kost WHERE id = ?", [id]);
+  const row = baris[0];
+  if (!row) return null;
+  const hasil = await formatDaftarKost([row]);
+  return hasil[0];
 }
 
 module.exports = {

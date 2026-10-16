@@ -5,7 +5,7 @@ if (!process.env.JWT_SECRET) {
 }
 const express = require("express");
 const cors = require("cors");
-require("./db"); // menjalankan pembuatan tabel + seed
+const { siap } = require("./db"); // promise: tabel + seed MySQL selesai dibuat
 
 const app = express();
 
@@ -45,6 +45,18 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server jalan di http://localhost:${PORT}`);
-});
+
+// Server baru mulai menerima request setelah koneksi MySQL, skema, dan
+// seed selesai (await siap) -- mencegah request pertama gagal karena
+// tabel belum sempat dibuat (beda dari SQLite yang sinkron sebelumnya).
+siap
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server jalan di http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Gagal menyiapkan database MySQL. Server dihentikan.");
+    console.error(err);
+    process.exit(1);
+  });

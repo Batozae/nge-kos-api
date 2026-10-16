@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const db = require("../db");
+const { pool } = require("../db");
 const { kirimError } = require("../utils/http");
 const { requireAuth } = require("../middleware/auth");
 
@@ -63,10 +63,11 @@ router.post("/register", async (req, res, next) => {
       );
     }
 
-    const sudahAda = db
-      .prepare("SELECT id FROM users WHERE email = ?")
-      .get(email);
-    if (sudahAda) {
+    const [sudahAdaRows] = await pool.execute(
+      "SELECT id FROM users WHERE email = ?",
+      [email],
+    );
+    if (sudahAdaRows[0]) {
       return kirimError(res, 409, "EMAIL_TAKEN", "Email sudah terdaftar");
     }
 
@@ -74,20 +75,24 @@ router.post("/register", async (req, res, next) => {
 
     let id;
     try {
-      id = db
-        .prepare(
-          "INSERT INTO users (nama, email, password_hash, role) VALUES (?, ?, ?, ?)",
-        )
-        .run(nama, email, hash, role).lastInsertRowid;
+      const [hasil] = await pool.execute(
+        "INSERT INTO users (nama, email, password_hash, role) VALUES (?, ?, ?, ?)",
+        [nama, email, hash, role],
+      );
+      id = hasil.insertId;
     } catch (err) {
       // Berjaga-jaga kalau dua pendaftaran dengan email sama masuk bersamaan
-      if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+      if (err.code === "ER_DUP_ENTRY") {
         return kirimError(res, 409, "EMAIL_TAKEN", "Email sudah terdaftar");
       }
       throw err;
     }
 
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+    const [userRows] = await pool.execute(
+      "SELECT * FROM users WHERE id = ?",
+      [id],
+    );
+    const user = userRows[0];
     res.status(201).json({ token: buatToken(user), user: formatUser(user) });
   } catch (err) {
     next(err);
@@ -111,7 +116,11 @@ router.post("/login", async (req, res, next) => {
       );
     }
 
-    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const [userRows] = await pool.execute(
+      "SELECT * FROM users WHERE email = ?",
+      [email],
+    );
+    const user = userRows[0];
     const cocok = user
       ? await bcrypt.compare(password, user.password_hash)
       : false;
@@ -133,17 +142,25 @@ router.post("/login", async (req, res, next) => {
 });
 
 // GET /auth/me  (tambahan di luar kontrak awal)
-router.get("/me", requireAuth, (req, res) => {
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
-  if (!user) {
-    return kirimError(
-      res,
-      401,
-      "INVALID_TOKEN",
-      "Akun untuk token ini tidak ditemukan",
+router.get("/me", requireAuth, async (req, res, next) => {
+  try {
+    const [userRows] = await pool.execute(
+      "SELECT * FROM users WHERE id = ?",
+      [req.user.id],
     );
+    const user = userRows[0];
+    if (!user) {
+      return kirimError(
+        res,
+        401,
+        "INVALID_TOKEN",
+        "Akun untuk token ini tidak ditemukan",
+      );
+    }
+    res.json({ data: formatUser(user) });
+  } catch (err) {
+    next(err);
   }
-  res.json({ data: formatUser(user) });
 });
 
 module.exports = router;
